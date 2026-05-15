@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>POS El Tridente - Control Total</title>
+    <!-- Firebase App y Realtime Database SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+    <!-- Gráficos y PDF -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+    <style>
+        :root { 
+            --cafe: #4e342e; --ocre: #ffb300; --verde: #2e7d32; --fondo: #f4f4f9; 
+            --azul: #1976d2; --rojo: #d32f2f; --texto: #333; --card-bg: rgba(255, 255, 255, 0.95);
+        }
+        body { font-family: 'Segoe UI', sans-serif; background-color: var(--fondo); margin: 0; padding: 10px; color: var(--texto); }
+        .card { background: var(--card-bg); border-radius: 15px; padding: 15px; margin-bottom: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border: 1px solid #ddd; }
+        .hidden { display: none !important; }
+        .btn { border: none; border-radius: 8px; padding: 12px; font-weight: bold; width: 100%; cursor: pointer; transition: 0.2s; display: flex; align-items: center; justify-content: center; gap: 5px; }
+        .btn:active { transform: scale(0.98); }
+        .btn-add { background: var(--ocre); color: #000; }
+        .btn-danger { background: var(--rojo); color: white; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        input, select { width: 100%; padding: 12px; margin: 5px 0; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; font-size: 16px; }
+        .badge { padding: 4px 8px; border-radius: 6px; font-weight: bold; font-size: 0.9rem; }
+        .stock-bajo { background: #ffebee; color: var(--rojo); }
+        .log-item { font-size: 0.85rem; padding: 8px; border-bottom: 1px solid #eee; color: #555; }
+        .tab-btn { padding: 12px; border: none; background: #ddd; border-radius: 8px; cursor: pointer; font-weight: bold; flex: 1; }
+        .tab-btn.active { background: var(--cafe); color: white; }
+        table { width: 100%; border-collapse: collapse; }
+        td, th { padding: 10px; text-align: left; border-bottom: 1px solid #eee; }
+    </style>
+</head>
+<body>
+
+<!-- PANTALLA DE APERTURA -->
+<div id="modalApertura" class="card" style="position:fixed; top:0; left:0; width:95%; height:92%; z-index:2000; margin:10px; display:none;">
+    <h2>☀️ Apertura de Caja</h2>
+    <p>Para comenzar el turno, ingrese el efectivo inicial (cambio en caja):</p>
+    <input type="number" id="fondoInicial" placeholder="Ej: 5000" inputmode="decimal">
+    <button class="btn btn-add" onclick="abrirCaja()">🚀 INICIAR JORNADA</button>
+</div>
+
+<div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h2>🔱 El Tridente</h2>
+        <button id="btnAdmin" class="btn" style="width:auto; background:#444; color:white; padding:8px 15px;" onclick="loginAdmin()">🔓 Modo Dueño</button>
+    </div>
+    
+    <div id="uiVentas">
+        <input type="text" id="busqueda" placeholder="🔍 Buscar producto..." onkeyup="buscar()" autocomplete="off">
+        <div id="sugerencias" style="display:none; background:white; border:1px solid #ccc; position:absolute; width:85%; z-index:100; border-radius:8px; box-shadow: 0 4px 10px rgba(0,0,0,0.2);"></div>
+        
+        <div class="grid-2">
+            <input type="number" id="cantidad" placeholder="Cantidad" inputmode="decimal">
+            <select id="selectCliente">
+                <!-- Se llena dinámicamente -->
+            </select>
+        </div>
+        
+        <div class="grid-2">
+            <button class="btn btn-add" onclick="agregarTicket('venta')">➕ VENTA</button>
+            <button class="btn" style="background:#607d8b; color:white;" onclick="agregarTicket('merma')">🗑️ MERMA</button>
+        </div>
+    </div>
+</div>
+
+<!-- TICKET ACTUAL -->
+<div id="areaTicket" class="card hidden">
+    <h3>🛒 Ticket Actual</h3>
+    <div id="listaItems"></div>
+    <h2 style="text-align:right; color:var(--verde); margin: 15px 0;">Total: <span id="totalActual">$0,00</span></h2>
+    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
+        <button class="btn" style="background:var(--verde); color:white;" onclick="finalizar('Efectivo')">💵 Efec.</button>
+        <button class="btn" style="background:var(--azul); color:white;" onclick="finalizar('Transferencia')">📲 Trans.</button>
+        <button class="btn" style="background:#555; color:white;" onclick="finalizar('Fiado')">📝 Fiado</button>
+    </div>
+</div>
+
+<!-- PESTAÑAS -->
+<div class="card">
+    <div style="display:flex; gap:5px; margin-bottom:10px;">
+        <button id="btnTabStock" class="tab-btn active" onclick="switchTab(event, 't-stock')">📦 Stock</button>
+        <button class="tab-btn" onclick="switchTab(event, 't-fiados')">🤝 Fiados</button>
+        <button id="tabAdmin" class="tab-btn hidden" onclick="switchTab(event, 't-admin')">⭐ Admin</button>
+    </div>
+
+    <div id="t-stock" class="tab-content">
+        <table>
+            <thead><tr><th>Producto</th><th>Stock</th><th>+</th></tr></thead>
+            <tbody id="bodyStock"></tbody>
+        </table>
+    </div>
+
+    <div id="t-fiados" class="tab-content hidden">
+        <h3>Gestión de Fiados</h3>
+        <div id="listaFiados"></div>
+        <hr>
+        <h4>Registrar Cliente Nuevo</h4>
+        <input type="text" id="nuevoCli" placeholder="Nombre completo">
+        <button class="btn btn-add" onclick="crearCliente()">💾 Guardar Cliente</button>
+    </div>
+
+    <div id="t-admin" class="tab-content hidden">
+        <div style="background: #fff3e0; padding: 15px; border-radius: 10px; border: 1px solid var(--ocre); margin-bottom: 20px;">
+            <h3>🆕 Agregar/Editar Productos</h3>
+            <input type="text" id="nP" placeholder="Nombre del pan">
+            <div class="grid-2">
+                <input type="number" id="pP" placeholder="Precio Venta ($)">
+                <input type="number" id="cP" placeholder="Costo Prod. ($)">
+            </div>
+            <input type="number" id="sP" placeholder="Stock Inicial">
+            <button class="btn btn-add" onclick="saveProd()">✅ GUARDAR PRODUCTO</button>
+        </div>
+
+        <h3>📜 Auditoría</h3>
+        <div id="logAuditoria" style="max-height:200px; overflow-y:auto; background:#f0f0f0; border-radius:8px; padding:5px;"></div>
+        <hr>
+        <h3>📊 Balance de Hoy</h3>
+        <canvas id="chartBalance"></canvas>
+        <button class="btn" style="background:#eee; margin-top:10px;" onclick="pdf()">📄 Descargar PDF de Cierre</button>
+        <button class="btn btn-danger" style="margin-top:20px;" onclick="resetDB()">⚠️ BORRAR TODA LA BASE DE DATOS</button>
+    </div>
+</div>
+
+<div class="card">
+    <button class="btn btn-danger" onclick="cierreCiego()">🔒 CERRAR CAJA Y TERMINAR TURNO</button>
+</div>
+
+<script>
+    // ⚠️ REEMPLAZA ESTOS DATOS CON LOS DE TU PROYECTO DE FIREBASE
+    const firebaseConfig = {
+        apiKey: "TU_API_KEY_AQUÍ",
+        authDomain: "tu-proyecto.firebaseapp.com",
+        databaseURL: "https://tu-proyecto-default-rtdb.firebaseio.com",
+        projectId: "tu-proyecto",
+        storageBucket: "tu-proyecto.appspot.com",
+        messagingSenderId: "1234567890",
+        appId: "1:123456:web:abcd1234"
+    };
+
+    // Inicializar Firebase
+    firebase.initializeApp(firebaseConfig);
+    const database = firebase.database();
+
+    // Estructura por defecto en caso de que la base de datos de la nube esté vacía
+    let db = { 
+        prods: [], clientes: [], ventas: [], mermas: [], logs: [], fondo: 0, cajaAbierta: false 
+    };
+    
+    let ticket = [];
+    let seleccionado = null;
+    let esAdmin = false;
+    let chartObj = null;
+    const fmt = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' });
+
+    // Sincronización en la Nube (Subir cambios)
+    function save() { 
+        database.ref('tridente_pos_db').set(db);
+    }
+
+    // Sincronización en la Nube (Escuchar cambios de cualquier dispositivo)
+    database.ref('tridente_pos_db').on('value', (snapshot) => {
+        const cloudData = snapshot.val();
+        if (cloudData) {
+            db = cloudData;
+            // Si la base de datos en la nube carece de listas iniciales, las creamos para evitar errores
+            if (!db.prods) db.prods = [];
+            if (!db.clientes) db.clientes = [];
+            if (!db.ventas) db.ventas = [];
+            if (!db.mermas) db.mermas = [];
+            if (!db.logs) db.logs = [];
+        }
+        render(); 
+    });
+
+    // CONTROL DE ACCESO (ADMIN IN/OUT)
+    function loginAdmin() {
+        if (esAdmin) {
+            if (confirm("¿Quieres salir del Modo Dueño?")) {
+                logoutAdmin();
+            }
+            return;
+        }
+
+        if(prompt("Clave de Dueño:") === "37958601") {
+            esAdmin = true;
+            document.getElementById('tabAdmin').classList.remove('hidden');
+            document.getElementById('btnAdmin').style.background = "var(--verde)";
+            document.getElementById('btnAdmin').innerText = "🔒 Salir Admin";
+            render();
+        } else { alert("Clave incorrecta"); }
+    }
+
+    function logoutAdmin() {
+        esAdmin = false;
+        document.getElementById('tabAdmin').classList.add('hidden');
+        document.getElementById('t-admin').classList.add('hidden');
+        document.getElementById('t-stock').classList.remove('hidden');
+        
+        const btn = document.getElementById('btnAdmin');
+        btn.style.background = "#444";
+        btn.innerText = "🔓 Modo Dueño";
+        
+        document.querySelectorAll('.tab-btn').forEach(x => x.classList.remove('active'));
+        document.getElementById('btnTabStock').classList.add('active');
+        
+        alert("Sesión de Admin cerrada.");
+        render();
+    }
+
+    function abrirCaja() {
+        const f = parseFloat(document.getElementById('fondoInicial').value);
+        if(isNaN(f)) return alert("Monto no válido");
+        db.fondo = f;
+        db.cajaAbierta = true;
+        db.logs.push({ fecha: new Date().toLocaleString(), msg: `🚀 CAJA ABIERTA. Fondo: ${fmt.format(f)}` });
+        document.getElementById('modalApertura').style.display = 'none';
+        save();
+    }
+
+    // OPERACIONES DE VENTA
+    function buscar() {
+        const t = document.getElementById('busqueda').value.toLowerCase();
+        const s = document.getElementById('sugerencias');
+        if(!t) return s.style.display='none';
+        const f = db.prods.filter(p => p.nombre.toLowerCase().includes(t));
+        s.innerHTML = f.map(p => `<div onclick="pick(${p.id})" style="padding:15px; border-bottom:1px solid #eee; cursor:pointer;">${p.nombre} <b style="float:right">${fmt.format(p.precio)}</b></div>`).join('');
+        s.style.display = 'block';
+    }
+
+    function pick(id) {
+        seleccionado = db.prods.find(p => p.id === id);
+        document.getElementById('busqueda').value = seleccionado.nombre;
+        document.getElementById('sugerencias').style.display = 'none';
+        document.getElementById('cantidad').focus();
+    }
+
+    function agregarTicket(tipo) {
+        const c = parseFloat(document.getElementById('cantidad').value);
+        if(!seleccionado || isNaN(c)) return alert("Falta producto o cantidad");
+        
+        let motivo = "";
+        if(tipo === 'merma') {
+            motivo = prompt("Motivo de la MERMA (ej: Quemado, Piso):");
+            if(!motivo) return;
+        }
+
+        ticket.push({ ...seleccionado, cant: c, tipo, sub: seleccionado.precio * c, motivo });
+        document.getElementById('busqueda').value = "";
+        document.getElementById('cantidad').value = "";
+        seleccionado = null;
+        renderTicket();
+    }
+
+    function borrarItem(index) {
+        const item = ticket[index];
+        db.logs.push({ fecha: new Date().toLocaleTimeString(), msg: `⚠️ ELIMINADO DEL TICKET: ${item.nombre}` });
+        ticket.splice(index, 1);
+        renderTicket();
+    }
+
+    function renderTicket() {
+        const div = document.getElementById('areaTicket');
+        const lista = document.getElementById('listaItems');
+        div.classList.toggle('hidden', ticket.length === 0);
+        lista.innerHTML = ticket.map((it, i) => `
+            <div style="display:flex; justify-content:space-between; padding:8px; background:#f9f9f9; margin-bottom:5px; border-radius:5px;">
+                <span>${it.tipo === 'merma' ? '🗑️ ' : ''}<b>${it.nombre}</b> x${it.cant}</span>
+                <span>${fmt.format(it.sub)} <button onclick="borrarItem(${i})" style="color:red; background:none; border:none; margin-left:10px; font-weight:bold;">X</button></span>
+            </div>
+        `).join('');
+        const total = ticket.reduce((a, b) => a + (b.tipo === 'venta' ? b.sub : 0), 0);
+        document.getElementById('totalActual').innerText = fmt.format(total);
+    }
+
+    function finalizar(metodo) {
+        const cli = document.getElementById('selectCliente').value;
+        
+        if(metodo === 'Fiado' && cli === 'Mostrador') {
+            return alert("⚠️ Error: Debe seleccionar un cliente de la lista para fiar.");
+        }
+
+        if(ticket.length === 0) return alert("El ticket está vacío");
+
+        ticket.forEach(it => {
+            const p = db.prods.find(x => x.id === it.id);
+            if(p) p.stock_actual -= it.cant;
+            
+            const r = { 
+                ...it, 
+                metodo, 
+                fecha: new Date().toLocaleDateString(), 
+                hora: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}), 
+                cliente: cli 
+            };
+
+            if(it.tipo === 'venta') {
+                db.ventas.push(r);
+                if(metodo === 'Fiado') {
+                    const c = db.clientes.find(cl => cl.nombre === cli);
+                    if(c) c.deuda += r.sub;
+                }
+            } else { 
+                db.mermas.push(r); 
+            }
+        });
+
+        db.logs.push({ fecha: new Date().toLocaleTimeString(), msg: `✅ VENTA ${metodo}: Cliente ${cli}` });
+        ticket = [];
+        save();
+        renderTicket();
+        alert("✅ Registrado con éxito");
+    }
+
+    function cierreCiego() {
+        const contado = parseFloat(prompt("CIERRE DE CAJA\nIngrese el total de EFECTIVO físico que hay en el cajón:"));
+        if(isNaN(contado)) return;
+
+        const hoy = new Date().toLocaleDateString();
+        const ventasEfec = db.ventas.filter(v => v.fecha === hoy && v.metodo === 'Efectivo').reduce((a, b) => a + b.sub, 0);
+        const esperado = ventasEfec + db.fondo;
+        const dif = contado - esperado;
+
+        db.logs.push({ 
+            fecha: new Date().toLocaleString(), 
+            msg: `🔒 CIERRE: Contado ${fmt.format(contado)} | Esperado ${fmt.format(esperado)} | DIF: ${fmt.format(dif)}` 
+        });
+
+        alert(`--- RESULTADO DEL CIERRE ---\nEsperado (Ventas + Fondo): ${fmt.format(esperado)}\nContado por empleado: ${fmt.format(contado)}\nDiferencia: ${fmt.format(dif)}\n\n${dif === 0 ? "✅ CAJA PERFECTA" : "⚠️ REVISAR FALTANTE"}`);
+        
+        db.cajaAbierta = false;
+        save();
+        setTimeout(() => { location.reload(); }, 500);
+    }
+
+    // ALTAS Y ACTUALIZACIONES (PRODUCTOS Y CLIENTES)
+    function saveProd() {
+        const n = document.getElementById('nP').value, p = parseFloat(document.getElementById('pP').value), 
+              c = parseFloat(document.getElementById('cP').value)||0, s = parseFloat(document.getElementById('sP').value)||0; 
+        if(n && p) {
+            db.prods.push({ id: Date.now(), nombre: n, precio: p, costo: c, stock_actual: s });
+            db.logs.push({ fecha: new Date().toLocaleString(), msg: `📦 Nuevo Producto: ${n}` });
+            save();
+            alert("Guardado");
+            ['nP','pP','cP','sP'].forEach(i => document.getElementById(i).value = "");
+        }
+    }
+
+    function crearCliente() {
+        const n = document.getElementById('nuevoCli').value.trim();
+        if(!n) return alert("Escriba un nombre");
+        
+        db.clientes.push({ nombre: n, deuda: 0 });
+        db.logs.push({ fecha: new Date().toLocaleTimeString(), msg: `🤝 Cliente Nuevo: ${n}` });
+        
+        save(); 
+        document.getElementById('nuevoCli').value = "";
+        alert("Cliente guardado y listo para elegir en Ventas");
+    }
+
+    function render() {
+        // Control visual del modal de apertura de caja
+        if(!db.cajaAbierta) {
+            document.getElementById('modalApertura').style.display = 'block';
+        } else {
+            document.getElementById('modalApertura').style.display = 'none';
+        }
+
+        // Lista de Stock
+        document.getElementById('bodyStock').innerHTML = db.prods.map(p => `
+            <tr>
+                <td>${p.nombre}</td>
+                <td><span class="badge ${p.stock_actual <= 5 ? 'stock-bajo' : ''}">${p.stock_actual}</span></td>
+                <td><button onclick="addStock(${p.id})">＋</button></td>
+            </tr>
+        `).join('');
+
+        // Sincronizar dinámicamente el Selector de Clientes en Ventas
+        const select = document.getElementById('selectCliente');
+        let options = '<option value="Mostrador">👤 Mostrador</option>';
+        db.clientes.forEach(c => {
+            options += `<option value="${c.nombre}">${c.nombre}</option>`;
+        });
+        select.innerHTML = options;
+
+        // Lista de Deudas (Fiados)
+        document.getElementById('listaFiados').innerHTML = db.clientes.map(c => `
+            <div style="display:flex; justify-content:space-between; padding:10px; background:#f0f7ff; margin-bottom:5px; border-radius:8px;">
+                <span><b>${c.nombre}</b></span>
+                <span><b style="color:red">${fmt.format(c.deuda)}</b> <button onclick="pagar(${db.clientes.indexOf(c)})" style="margin-left:10px;">Cobrar</button></span>
+            </div>
+        `).join('');
+
+        if(esAdmin) {
+            document.getElementById('logAuditoria').innerHTML = [...db.logs].reverse().map(l => `<div class="log-item"><b>${l.fecha}</b>: ${l.msg}</div>`).join('');
+            actualizarGrafico();
+        }
+    }
+
+    function addStock(id) {
+        const q = parseFloat(prompt("¿Cuánto stock ingresa?"));
+        if(!isNaN(q)) {
+            const p = db.prods.find(x => x.id === id);
+            p.stock_actual += q;
+            db.logs.push({ fecha: new Date().toLocaleTimeString(), msg: `📥 STOCK: ${p.nombre} +${q}` });
+            save();
+        }
+    }
+
+    function pagar(index) {
+        const monto = parseFloat(prompt(`¿Cuánto paga ${db.clientes[index].nombre}?`));
+        if(!isNaN(monto)) {
+            db.clientes[index].deuda -= monto;
+            db.logs.push({ fecha: new Date().toLocaleTimeString(), msg: `🤝 PAGO FIADO: ${db.clientes[index].nombre} pagó ${fmt.format(monto)}` });
+            save();
+        }
+    }
+
+    function switchTab(e, id) {
+        document.querySelectorAll('.tab-content').forEach(x => x.classList.add('hidden'));
+        document.querySelectorAll('.tab-btn').forEach(x => x.classList.remove('active'));
+        document.getElementById(id).classList.remove('hidden');
+        e.target.classList.add('active');
+    }
+
+    function actualizarGrafico() {
+        const ctx = document.getElementById('chartBalance').getContext('2d');
+        const hoy = new Date().toLocaleDateString();
+        const v = db.ventas.filter(x => x.fecha === hoy);
+        const data = [
+            v.filter(x => x.metodo === 'Efectivo').reduce((a,b) => a+b.sub, 0),
+            v.filter(x => x.metodo === 'Transferencia').reduce((a,b) => a+b.sub, 0),
+            v.filter(x => x.metodo === '
